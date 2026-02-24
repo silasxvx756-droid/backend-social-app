@@ -50,8 +50,8 @@ function generateCode() {
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: "seuemail@gmail.com",
-    pass: "sua-senha-ou-app-password",
+    user: "silasxvxx@gmail.com",
+    pass: "e1BIZZ0nUz7d2kQ8",
   },
 });
 
