@@ -1,140 +1,140 @@
-// src/app/(tabs)/_layout.tsx
-import { Redirect, Tabs } from "expo-router";
-import { Feather } from "@expo/vector-icons";
-import { useAuth } from "@clerk/clerk-expo";
-import { View, Text, Platform } from "react-native";
+import React, { useState, useCallback } from "react";
+import { View, useColorScheme, Image } from "react-native";
+import { Tabs, Redirect, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useAuth, useUser } from "@clerk/clerk-expo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const TabsLayout = () => {
   const { isSignedIn } = useAuth();
-  const [unreadCount, setUnreadCount] = useState(0);
+  const { user } = useUser();
+  const colorScheme = useColorScheme();
   const insets = useSafeAreaInsets();
 
-  useEffect(() => {
-    const loadUnreadNotifications = async () => {
-      try {
-        const stored = await AsyncStorage.getItem("@notifications");
-        const parsed = stored ? JSON.parse(stored) : [];
-        const unread = parsed.filter((n: any) => !n.read).length;
-        setUnreadCount(unread);
-      } catch (err) {
-        console.error("Erro ao carregar notificações:", err);
-      }
-    };
+  const [unreadCount, setUnreadCount] = useState(0);
+  const NOTIF_KEY = user ? `@notifications:${user.id}` : "";
 
-    loadUnreadNotifications();
-    const interval = setInterval(loadUnreadNotifications, 10000);
-    return () => clearInterval(interval);
-  }, []);
+  if (!isSignedIn) {
+    return <Redirect href="/(auth)" />;
+  }
 
-  if (!isSignedIn) return <Redirect href="/(auth)" />;
+  const loadUnread = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      const stored = await AsyncStorage.getItem(NOTIF_KEY);
+      const parsed = stored ? JSON.parse(stored) : [];
+      const unread = parsed.filter((n: any) => n.read === false).length;
+      setUnreadCount(unread);
+    } catch (e) {
+      console.log("Erro ao carregar notificações:", e);
+    }
+  }, [user, NOTIF_KEY]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadUnread();
+      const interval = setInterval(loadUnread, 5000);
+      return () => clearInterval(interval);
+    }, [loadUnread])
+  );
+
+  // 🔥 Sempre preto ativo
+  const activeTintColor = "#000000";
+  const inactiveTintColor =
+    colorScheme === "dark" ? "#6B7280" : "#9CA3AF";
+  const backgroundColor =
+    colorScheme === "dark" ? "#000000" : "#FFFFFF";
 
   return (
     <Tabs
-      screenOptions={{
+      screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: "#133de9",
-        tabBarInactiveTintColor: "#657786",
-        tabBarHideOnKeyboard: false,
+        tabBarShowLabel: false,
         tabBarStyle: {
-          position: "absolute",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: 58 + insets.bottom,
-          paddingTop: 8,
-          paddingBottom: insets.bottom > 0 ? insets.bottom - 2 : 6,
-          backgroundColor: "#fff",
-          borderTopWidth: 1,
-          borderTopColor: "#E1E8ED",
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: -3 },
-          shadowOpacity: 0.08,
-          shadowRadius: 4,
-          elevation: 6,
+          backgroundColor: backgroundColor,
+          borderTopWidth: 0.5,
+          borderTopColor:
+            colorScheme === "dark" ? "#111" : "#E5E7EB",
+          height: 55 + insets.bottom,
+          paddingBottom: insets.bottom,
         },
-        keyboardHidesTabBar: false, // 👈 força o tab bar a permanecer visível
-      }}
-      sceneContainerStyle={{
-        // 👇 evita que o conteúdo "empurre" o tab bar ao abrir teclado
-        marginBottom: Platform.OS === "android" ? 0 : undefined,
-      }}
+        tabBarIcon: ({ focused, color }) => {
+          // 🔥 FOTO REAL DO CLERK
+          if (route.name === "profile") {
+            if (user?.imageUrl) {
+              return (
+                <Image
+                  source={{ uri: user.imageUrl }}
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 14,
+                    borderWidth: focused ? 2 : 0,
+                    borderColor: focused ? "#000000" : "transparent",
+                  }}
+                />
+              );
+            }
+
+            // fallback temporário
+            return (
+              <Ionicons
+                name="person-outline"
+                size={24}
+                color={focused ? "#000000" : color}
+              />
+            );
+          }
+
+          let iconName = "";
+
+          switch (route.name) {
+            case "index":
+              iconName = focused ? "home" : "home-outline";
+              break;
+            case "search":
+              iconName = focused ? "search" : "search-outline";
+              break;
+            case "reels":
+              iconName = focused
+                ? "play-circle"
+                : "play-circle-outline";
+              break;
+            case "notifications":
+              iconName = focused
+                ? "notifications"
+                : "notifications-outline";
+              break;
+            case "messages":
+              iconName = focused
+                ? "chatbubble"
+                : "chatbubble-outline";
+              break;
+          }
+
+          return (
+            <Ionicons
+              name={iconName as any}
+              size={24}
+              color={focused ? "#000000" : color}
+            />
+          );
+        },
+      })}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "",
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="home" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="search"
-        options={{
-          title: "",
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="search" size={size} color={color} />
-          ),
-        }}
-      />
+      <Tabs.Screen name="index" />
+      <Tabs.Screen name="search" />
+      <Tabs.Screen name="reels" />
       <Tabs.Screen
         name="notifications"
         options={{
-          title: "",
-          tabBarIcon: ({ color, size }) => (
-            <View>
-              <Feather name="bell" size={size} color={color} />
-              {unreadCount > 0 && (
-                <View
-                  style={{
-                    position: "absolute",
-                    top: -4,
-                    right: -6,
-                    backgroundColor: "red",
-                    borderRadius: 10,
-                    minWidth: 16,
-                    height: 16,
-                    justifyContent: "center",
-                    alignItems: "center",
-                    paddingHorizontal: 3,
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: "white",
-                      fontSize: 10,
-                      fontWeight: "bold",
-                    }}
-                  >
-                    {unreadCount}
-                  </Text>
-                </View>
-              )}
-            </View>
-          ),
+          tabBarBadge: unreadCount > 0 ? unreadCount : undefined,
         }}
       />
-      <Tabs.Screen
-        name="messages"
-        options={{
-          title: "",
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="mail" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: "",
-          tabBarIcon: ({ color, size }) => (
-            <Feather name="user" size={size} color={color} />
-          ),
-        }}
-      />
+      <Tabs.Screen name="messages" />
+      <Tabs.Screen name="profile" />
     </Tabs>
   );
 };

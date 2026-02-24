@@ -9,14 +9,12 @@ import { postEvents } from "@/hooks/usePosts";
 export const useCreatePost = () => {
   const { currentUser } = useCurrentUser();
 
-  // 🔢 Máximo de caracteres da legenda
   const maxChars = 2200;
 
   const [content, setContent] = useState("");
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
-  // 🖼️ Escolher imagem da galeria
   const pickImageFromGallery = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -29,7 +27,6 @@ export const useCreatePost = () => {
     }
   };
 
-  // 📸 Tirar foto
   const takePhoto = async () => {
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -42,10 +39,8 @@ export const useCreatePost = () => {
     }
   };
 
-  // ❌ Remover imagem
   const removeImage = () => setSelectedImage(null);
 
-  // 📝 Criar post
   const createPost = async () => {
     if (!content.trim() && !selectedImage) return;
 
@@ -57,7 +52,6 @@ export const useCreatePost = () => {
     try {
       setIsCreating(true);
 
-      // 🚫 Remove quebras de linha
       const sanitizedContent = content.replace(/\r?\n|\r/g, " ");
 
       const stored = await AsyncStorage.getItem("posts");
@@ -81,29 +75,35 @@ export const useCreatePost = () => {
       const updated = [newPost, ...existing];
       await AsyncStorage.setItem("posts", JSON.stringify(updated));
 
-      // 🔔 Salvar notificação local no app
-      const storedNotifs = await AsyncStorage.getItem("@notifications");
+      // ----------------------------------------------------------
+      // 🔔 NOTIFICAÇÃO LOCAL — agora com o texto que você pediu
+      // ----------------------------------------------------------
+      const notifKey = `@notifications:${currentUser?.id}`;
+
+      const storedNotifs = await AsyncStorage.getItem(notifKey);
       const parsedNotifs = storedNotifs ? JSON.parse(storedNotifs) : [];
 
       const newNotification = {
         id: Date.now().toString(),
         type: "post",
-        message: "@conectdesigner criou uma nova publicação 🚀",
+        message: `@${currentUser?.username} criou uma nova publicação`,
         createdAt: Date.now(),
         read: false,
         postId: newPost.id,
       };
 
       await AsyncStorage.setItem(
-        "@notifications",
+        notifKey,
         JSON.stringify([...parsedNotifs, newNotification])
       );
+      // ----------------------------------------------------------
 
-      // 🔔 Notificação no dispositivo (APENAS para @conectdesigner)
+      // 📱 Notificação push (apenas para o próprio usuário)
       if (currentUser?.username === "conectdesigner") {
         await Notifications.scheduleNotificationAsync({
           content: {
-            title: "🔥 @conectdesigner acabou de postar algo novo!",
+            title: "Você precisa ver a publicação da conect!",
+            body: "A publicação dele já está disponível para todos.",
           },
           trigger: null,
         });
@@ -130,7 +130,6 @@ export const useCreatePost = () => {
     takePhoto,
     removeImage,
     createPost,
-
     maxChars,
     remainingChars: maxChars - content.length,
   };

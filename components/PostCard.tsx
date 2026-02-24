@@ -1,433 +1,318 @@
-// src/components/PostCard.tsx
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import {
   View,
   Text,
-  Pressable,
   TouchableOpacity,
   StyleSheet,
   Image,
-  TextInput,
   Dimensions,
-  Animated,
-  Alert,
+  useColorScheme,
+  Modal,
+  ScrollView,
+  TextInput,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather, FontAwesome } from "@expo/vector-icons";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
-import { postEvents } from "@/hooks/usePosts";
 import { addNotification } from "@/utils/addNotification";
-import { useRouter } from "expo-router";
-import Modal from "react-native-modal";
+import { useFocusEffect } from "expo-router";
 
-const { width } = Dimensions.get("window");
+/* ---------------- RESPONSIVO ---------------- */
+const { width: screenWidth } = Dimensions.get("window");
+const isDesktop = screenWidth >= 768;
+const containerWidth = isDesktop ? 520 : screenWidth;
 
-// ----------------------
-//  COMPONENTE DO CORAÇÃO
-// ----------------------
-const HeartAnimated = React.memo(({ visible, scale, opacity }: any) => {
-  if (!visible) return null;
-
-  return (
-    <Animated.View
-      style={{
-        position: "absolute",
-        top: "50%",
-        left: "50%",
-        transform: [{ translateX: -40 }, { translateY: -40 }, { scale }],
-        opacity,
-      }}
-    >
-      <FontAwesome name="heart" size={80} color="#e0245e" />
-    </Animated.View>
-  );
-});
-
-// ----------------------
-// FORMATAÇÃO DE TEMPO
-// ----------------------
-const formatInstagramTime = (timestamp: number) => {
-  const diffMs = Date.now() - timestamp;
-  const minutes = Math.floor(diffMs / 60000);
+/* ---------------- UTIL ---------------- */
+const timeAgo = (timestamp: number) => {
+  const diff = Date.now() - timestamp;
+  const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
 
-  if (minutes < 1) return "agora";
-  if (minutes === 1) return "há 1 min";
+  if (minutes < 1) return "agora mesmo";
   if (minutes < 60) return `há ${minutes} min`;
-
-  if (hours === 1) return "há 1 h";
   if (hours < 24) return `há ${hours} h`;
-
-  if (days === 1) return "há 1 d";
-  if (days < 7) return `há ${days} d`;
-
-  return new Date(timestamp).toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "short",
-  });
+  return `há ${days} d`;
 };
 
-const PostCard = ({ post, onDelete, onComment }: any) => {
+const PostCard = ({ post, isProfile = false }: any) => {
   const { currentUser } = useCurrentUser();
-  const router = useRouter();
+  const darkMode = useColorScheme() === "dark";
+  const iconColor = darkMode ? "#fff" : "#000";
 
-  // ----------------------------
-  // CONTROLA NAVEGAÇÃO RÁPIDA
-  // ----------------------------
-  const isNavigating = useRef(false);
-  const openProfile = useCallback(
-    (u: any) => {
-      if (isNavigating.current) return;
-      isNavigating.current = true;
+  if (!currentUser || !post?.user) return null;
 
-      router.push(
-        `/UserProfileScreen?userId=${u.id}&username=${u.username}&avatar=${u.avatar}`
-      );
+  const displayName =
+    post.user.displayName ||
+    post.user.name ||
+    post.user.username ||
+    "unknown";
 
-      setTimeout(() => {
-        isNavigating.current = false;
-      }, 700);
-    },
-    [router]
-  );
+  const avatar = post.user.avatar || "https://via.placeholder.com/150";
 
-  // ----------------------------
-  // STATES PRINCIPAIS
-  // ----------------------------
+  /* ================= STATES ================= */
+  const [postModalVisible, setPostModalVisible] = useState(false);
+  const [commentsModalVisible, setCommentsModalVisible] = useState(false);
+  const [postComments, setPostComments] = useState<any[]>([]);
+  const [newComment, setNewComment] = useState("");
+
   const [liked, setLiked] = useState(
-    post.likes.some((u: any) => u.id === currentUser?.id)
+    post.likes?.some((u: any) => u.id === currentUser.id)
+  );
+  const [likeCount, setLikeCount] = useState(post.likes?.length || 0);
+  const [commentCount, setCommentCount] = useState(
+    post.comments?.length || 0
   );
 
-  const [likeCount, setLikeCount] = useState(post.likes.length);
+  /* ================= LOAD DATA ================= */
+  useFocusEffect(
+    useCallback(() => {
+      const loadData = async () => {
+        const storedPosts = await AsyncStorage.getItem("posts");
+        const parsedPosts = storedPosts ? JSON.parse(storedPosts) : [];
 
-  const [comments, setComments] = useState(post.comments || []);
-  const [commentText, setCommentText] = useState("");
-  const [commentsVisible, setCommentsVisible] = useState(false);
-
-  const [likesVisible, setLikesVisible] = useState(false);
-  const [likers, setLikers] = useState(post.likes || []);
-
-  // ----------------------------
-  //  ANIMAÇÃO DO CORAÇÃO
-  // ----------------------------
-  const [showHeart, setShowHeart] = useState(false);
-  const likeScale = useRef(new Animated.Value(1)).current;
-  const heartOpacity = useRef(new Animated.Value(0)).current;
-
-  const lastTapRef = useRef<number | null>(null);
-
-  // ----------------------------
-  //   CARREGA COMENTÁRIOS
-  // ----------------------------
-  const loadComments = useCallback(async () => {
-    try {
-      const stored = await AsyncStorage.getItem(`@comments:${post.id}`);
-      if (stored) setComments(JSON.parse(stored));
-    } catch {}
-  }, [post.id]);
-
-  const saveComments = useCallback(
-    async (updated: any) => {
-      try {
-        await AsyncStorage.setItem(
-          `@comments:${post.id}`,
-          JSON.stringify(updated)
+        const updatedPost = parsedPosts.find(
+          (p: any) => p.id === post.id
         );
-      } catch {}
-    },
-    [post.id]
+
+        if (updatedPost) {
+          setCommentCount(updatedPost.comments?.length || 0);
+          setLikeCount(updatedPost.likes?.length || 0);
+          setLiked(
+            updatedPost.likes?.some(
+              (u: any) => u.id === currentUser.id
+            )
+          );
+          setPostComments(updatedPost.comments || []);
+        }
+      };
+
+      loadData();
+    }, [post.id])
   );
 
-  // ----------------------------
-  //   CARREGA LIKERS
-  // ----------------------------
-  const loadLikers = useCallback(async () => {
-    try {
-      const stored = await AsyncStorage.getItem("posts");
-      if (!stored) return;
-
-      const parsed = JSON.parse(stored);
-      const currentPost = parsed.find((p: any) => p.id === post.id);
-
-      if (currentPost) setLikers(currentPost.likes);
-    } catch {}
-  }, [post.id]);
-
-  useEffect(() => {
-    loadComments();
-    loadLikers();
-  }, []);
-
-  // ----------------------------
-  //   LIKE DO POST
-  // ----------------------------
-  const handleLikePost = useCallback(async () => {
-    if (!currentUser) return;
-
-    // animação
-    Animated.sequence([
-      Animated.spring(likeScale, { toValue: 1.4, useNativeDriver: true }),
-      Animated.spring(likeScale, { toValue: 1, useNativeDriver: true }),
-    ]).start();
-
+  /* ================= LIKE ================= */
+  const handleLikePost = async () => {
     const newLiked = !liked;
     setLiked(newLiked);
     setLikeCount((prev) => (newLiked ? prev + 1 : prev - 1));
 
-    try {
-      const stored = await AsyncStorage.getItem("posts");
-      const parsed = stored ? JSON.parse(stored) : [];
+    const stored = await AsyncStorage.getItem("posts");
+    const parsed = stored ? JSON.parse(stored) : [];
 
-      const updated = parsed.map((p: any) =>
-        p.id === post.id
-          ? {
-              ...p,
-              likes: newLiked
-                ? [
-                    ...p.likes,
-                    {
-                      id: currentUser.id,
-                      username: currentUser.username,
-                      avatar: currentUser.avatar,
-                    },
-                  ]
-                : p.likes.filter((u: any) => u.id !== currentUser.id),
-            }
-          : p
-      );
+    const updated = parsed.map((p: any) =>
+      p.id === post.id
+        ? {
+            ...p,
+            likes: newLiked
+              ? [...(p.likes || []), currentUser]
+              : (p.likes || []).filter(
+                  (u: any) => u.id !== currentUser.id
+                ),
+          }
+        : p
+    );
 
-      await AsyncStorage.setItem("posts", JSON.stringify(updated));
-      postEvents.emit("post-updated", post.id);
+    await AsyncStorage.setItem("posts", JSON.stringify(updated));
 
-      if (newLiked && post.user.id !== currentUser.id) {
-        await addNotification(
-          {
-            id: currentUser.id,
-            username: currentUser.username,
-            avatar: currentUser.avatar,
-          },
-          "like",
-          post.id
-        );
-      }
-    } catch {}
-  }, [liked, currentUser, post]);
-
-  // ----------------------------
-  //   TAP NA IMAGEM (CURTIR)
-  // ----------------------------
-  const handleTap = useCallback(() => {
-    const now = Date.now();
-
-    if (lastTapRef.current && now - lastTapRef.current < 300) {
-      if (!liked) handleLikePost();
-
-      setShowHeart(true);
-      heartOpacity.setValue(1);
-
-      Animated.sequence([
-        Animated.timing(heartOpacity, {
-          toValue: 1,
-          duration: 80,
-          useNativeDriver: true,
-        }),
-        Animated.delay(250),
-        Animated.timing(heartOpacity, {
-          toValue: 0,
-          duration: 250,
-          useNativeDriver: true,
-        }),
-      ]).start(() => setShowHeart(false));
-
-      lastTapRef.current = null;
-      return;
+    if (newLiked && post.user.id !== currentUser.id) {
+      await addNotification(currentUser, "like", post.id, post.user.id);
     }
+  };
 
-    lastTapRef.current = now;
-  }, [liked, handleLikePost]);
+  /* ================= COMMENTS ================= */
+  const addComment = async () => {
+    if (!newComment.trim()) return;
 
-  // ----------------------------
-  //   ADICIONAR COMENTÁRIO
-  // ----------------------------
-  const handleAddComment = useCallback(async () => {
-    if (!commentText.trim() || !currentUser) return;
-
-    const newComment = {
-      id: Date.now().toString(),
-      text: commentText.trim(),
-      user: {
-        id: currentUser.id,
-        username: currentUser.username,
-        avatar: currentUser.avatar,
-      },
+    const commentObj = {
+      text: newComment,
       createdAt: Date.now(),
+      user: currentUser,
     };
 
-    const updated = [...comments, newComment];
-    setComments(updated);
-    setCommentText("");
+    const stored = await AsyncStorage.getItem("posts");
+    const parsed = stored ? JSON.parse(stored) : [];
 
-    await saveComments(updated);
-    postEvents.emit("post-updated", post.id);
+    const updated = parsed.map((p: any) =>
+      p.id === post.id
+        ? {
+            ...p,
+            comments: [...(p.comments || []), commentObj],
+          }
+        : p
+    );
 
-    onComment?.({ ...post, comments: updated });
+    await AsyncStorage.setItem("posts", JSON.stringify(updated));
 
-    if (post.user.id !== currentUser.id) {
-      await addNotification(
+    setPostComments((prev) => [...prev, commentObj]);
+    setCommentCount((prev) => prev + 1);
+    setNewComment("");
+  };
+
+  /* ================= CARD CONTENT ================= */
+  const renderPost = () => (
+    <View
+      style={[
+        styles.card,
         {
-          id: currentUser.id,
-          username: currentUser.username,
-          avatar: currentUser.avatar,
+          width: containerWidth,
+          backgroundColor: darkMode ? "#000" : "#fff",
         },
-        "comment",
-        post.id
-      );
-    }
-  }, [commentText, comments, currentUser, post]);
-
-  // ----------------------------
-  //   DELETAR POST
-  // ----------------------------
-  const handleDeletePost = useCallback(() => {
-    Alert.alert("Apagar postagem", "Deseja realmente apagar?", [
-      { text: "Cancelar", style: "cancel" },
-      {
-        text: "Apagar",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            const stored = await AsyncStorage.getItem("posts");
-            const parsed = stored ? JSON.parse(stored) : [];
-            const updated = parsed.filter((p: any) => p.id !== post.id);
-
-            await AsyncStorage.setItem("posts", JSON.stringify(updated));
-            postEvents.emit("post-updated", post.id);
-            onDelete?.(post.id);
-          } catch {}
-        },
-      },
-    ]);
-  }, [post]);
-
-  if (!currentUser) return null;
-
-  // ----------------------------
-  //     RENDER
-  // ----------------------------
-  return (
-    <View style={styles.card}>
-      {/* HEADER */}
+      ]}
+    >
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => openProfile(post.user)}
-          style={{ flexDirection: "row", alignItems: "center", flex: 1 }}
-          activeOpacity={0.7}
-        >
-          <Image
-            source={{
-              uri:
-                post.user.avatar ||
-                "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-            }}
-            style={styles.avatar}
-          />
-          <View style={{ marginLeft: 10 }}>
-            <Text style={styles.displayName}>@{post.user.username}</Text>
-            <Text style={styles.postTime}>
-              {formatInstagramTime(post.createdAt)}
-            </Text>
-          </View>
-        </TouchableOpacity>
-
-        {currentUser.id === post.user.id && (
-          <TouchableOpacity onPress={handleDeletePost}>
-            <Feather name="more-vertical" size={22} color="#555" />
-          </TouchableOpacity>
-        )}
+        <Image source={{ uri: avatar }} style={styles.avatar} />
+        <Text style={[styles.displayName, { color: iconColor }]}>
+          {displayName}
+        </Text>
       </View>
 
-      {/* TEXTO */}
-      {post.content && (
-        <Text style={styles.content}>{post.content}</Text>
-      )}
+      <Image source={{ uri: post.image }} style={styles.postImage} />
 
-      {/* IMAGEM */}
-      {post.image && (
-        <Pressable onPress={handleTap}>
-          <View style={{ position: "relative" }}>
-            <Image
-              source={{ uri: post.image }}
-              style={styles.postImage}
-              resizeMode="cover"
-            />
-
-            <HeartAnimated
-              visible={showHeart}
-              scale={likeScale}
-              opacity={heartOpacity}
-            />
-          </View>
-        </Pressable>
-      )}
-
-      {/* AÇÕES */}
       <View style={styles.actions}>
-        <TouchableOpacity
-          onPress={handleLikePost}
-          style={styles.actionButton}
-        >
-          <Animated.View style={{ transform: [{ scale: likeScale }] }}>
-            {liked ? (
-              <FontAwesome name="heart" size={20} color="#e0245e" />
-            ) : (
-              <Feather name="heart" size={20} color="#555" />
-            )}
-          </Animated.View>
-
-          <TouchableOpacity onPress={() => setLikesVisible(true)}>
-            <Text style={styles.likesCount}>{likeCount}</Text>
-          </TouchableOpacity>
+        <TouchableOpacity onPress={handleLikePost} style={styles.actionButton}>
+          {liked ? (
+            <FontAwesome name="heart" size={24} color="#e0245e" />
+          ) : (
+            <Feather name="heart" size={24} color={iconColor} />
+          )}
+          <Text style={{ marginLeft: 6, color: iconColor }}>
+            {likeCount}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          onPress={() => setCommentsVisible(true)}
+          onPress={() => setCommentsModalVisible(true)}
           style={styles.actionButton}
         >
-          <Feather name="message-circle" size={20} color="#555" />
-          <Text style={styles.likesCount}>{comments.length}</Text>
+          <Feather name="message-circle" size={24} color={iconColor} />
+          <Text style={{ marginLeft: 6, color: iconColor }}>
+            {commentCount}
+          </Text>
         </TouchableOpacity>
       </View>
-
-      {/* 
-      MODAIS 
-      (Manter os seus, apenas não coloque dentro do PostCard se quiser máxima performance)
-      */}
     </View>
+  );
+
+  return (
+    <>
+      {/* SE ESTIVER NO PROFILE → ABRE MODAL */}
+      {isProfile ? (
+        <>
+          <TouchableOpacity onPress={() => setPostModalVisible(true)}>
+            {renderPost()}
+          </TouchableOpacity>
+
+          <Modal visible={postModalVisible} animationType="slide">
+            <View style={{ flex: 1, backgroundColor: darkMode ? "#000" : "#fff" }}>
+              <View style={styles.modalHeader}>
+                <TouchableOpacity onPress={() => setPostModalVisible(false)}>
+                  <Feather name="arrow-left" size={24} color={iconColor} />
+                </TouchableOpacity>
+                <Text style={[styles.modalTitle, { color: iconColor }]}>
+                  Post
+                </Text>
+                <View style={{ width: 24 }} />
+              </View>
+
+              <ScrollView contentContainerStyle={{ alignItems: "center" }}>
+                {renderPost()}
+              </ScrollView>
+            </View>
+          </Modal>
+        </>
+      ) : (
+        renderPost()
+      )}
+
+      {/* COMMENTS MODAL */}
+      <Modal visible={commentsModalVisible} animationType="slide">
+        <View style={{ flex: 1, backgroundColor: darkMode ? "#000" : "#fff" }}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setCommentsModalVisible(false)}>
+              <Feather name="arrow-left" size={24} color={iconColor} />
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: iconColor }]}>
+              Comentários
+            </Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          <ScrollView style={{ flex: 1, paddingHorizontal: 16 }}>
+            {postComments.map((comment: any, index: number) => (
+              <View key={index} style={{ marginBottom: 16 }}>
+                <Text style={{ color: iconColor }}>
+                  <Text style={{ fontWeight: "700" }}>
+                    {comment.user?.username}{" "}
+                  </Text>
+                  {comment.text}
+                </Text>
+                <Text style={{ fontSize: 12, color: "#888" }}>
+                  {timeAgo(comment.createdAt)}
+                </Text>
+              </View>
+            ))}
+          </ScrollView>
+
+          <View style={styles.commentInputContainer}>
+            <TextInput
+              placeholder="Adicionar comentário..."
+              placeholderTextColor="#888"
+              value={newComment}
+              onChangeText={setNewComment}
+              style={[
+                styles.commentInput,
+                { color: iconColor, borderColor: iconColor },
+              ]}
+            />
+            <TouchableOpacity onPress={addComment}>
+              <Text style={{ color: "#0095f6", fontWeight: "600" }}>
+                Enviar
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 };
 
 export default React.memo(PostCard);
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
+  card: { marginBottom: 12, borderRadius: 12, overflow: "hidden" },
+  header: { flexDirection: "row", padding: 12, alignItems: "center" },
+  avatar: { width: 40, height: 40, borderRadius: 20, marginRight: 10 },
+  displayName: { fontWeight: "700", fontSize: 14 },
+  postImage: { width: "100%", aspectRatio: 1 },
+  actions: { flexDirection: "row", padding: 12 },
+  actionButton: { flexDirection: "row", alignItems: "center", marginRight: 18 },
+
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingTop: 20,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+
+  modalTitle: { fontSize: 18, fontWeight: "600" },
+
+  commentInputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
     padding: 12,
-    marginBottom: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#ccc",
   },
-  header: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
-  avatar: { width: 40, height: 40, borderRadius: 20 },
-  displayName: { fontWeight: "600", color: "#222" },
-  postTime: { fontSize: 12, color: "#777" },
-  content: { fontSize: 14, color: "#333", marginBottom: 8 },
-  postImage: {
-    width: width * 0.9,
-    height: width * 0.9,
-    borderRadius: 10,
-    backgroundColor: "#eee",
+
+  commentInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 10,
   },
-  actions: { flexDirection: "row", alignItems: "center", marginTop: 6 },
-  actionButton: { flexDirection: "row", alignItems: "center", marginRight: 16 },
-  likesCount: { marginLeft: 6, color: "#444" },
 });

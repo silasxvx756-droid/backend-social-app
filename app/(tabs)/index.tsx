@@ -1,57 +1,132 @@
 // src/app/(tabs)/index.tsx
-import PostComposer from "@/components/PostComposer";
+
 import PostsList from "@/components/PostsList";
 import { usePosts } from "@/hooks/usePosts";
 import { useUserSync } from "@/hooks/useUserSync";
-import { useState, useRef, useEffect } from "react";
-import { RefreshControl, ScrollView, View } from "react-native";
+
+import { useRef, useState } from "react";
+import {
+  RefreshControl,
+  ScrollView,
+  View,
+  Text,
+  TouchableOpacity,
+  useColorScheme,
+  Platform,
+  useWindowDimensions,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useNavigation } from "expo-router";
+import { useRouter } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
+import { useScrollToTop } from "@react-navigation/native";
 
-const HomeScreen = () => {
-  const [isRefetching, setIsRefetching] = useState(false);
-  const { reload } = usePosts();
+export default function HomeScreen() {
+  const router = useRouter();
   const scrollRef = useRef<ScrollView>(null);
-  const navigation = useNavigation();
+  const colorScheme = useColorScheme();
+  const { width } = useWindowDimensions();
 
+  const isDark = colorScheme === "dark";
+  const isWeb = Platform.OS === "web";
+  const isDesktop = isWeb && width >= 1024;
+
+  const { reload } = usePosts();
+  const [isRefetching, setIsRefetching] = useState(false);
+
+  useUserSync();
+  useScrollToTop(scrollRef);
+
+  // Pull to refresh (apenas mobile)
   const handlePullToRefresh = async () => {
+    if (isDesktop) return;
+
     setIsRefetching(true);
     await reload();
     setIsRefetching(false);
   };
 
-  useUserSync();
+  // Novo post
+  const openGalleryPost = async () => {
+    const { status } =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") return;
 
-  // 🔥 Detecta clique repetido na aba "Home" e sobe o feed
-  useEffect(() => {
-    const unsubscribe = navigation.addListener("tabPress", (e) => {
-      scrollRef.current?.scrollTo({ y: 0, animated: true });
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 1,
     });
-    return unsubscribe;
-  }, [navigation]);
+
+    if (!result.canceled) {
+      router.push({
+        pathname: "/edit-post",
+        params: {
+          image: result.assets[0].uri,
+          type: "post",
+        },
+      });
+    }
+  };
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
-      <View className="border-b border-gray-100 px-4 py-3" />
+    <SafeAreaView
+      style={{
+        flex: 1,
+        backgroundColor: isDark ? "#000" : "#fff",
+      }}
+    >
+      {/* HEADER */}
+      <View
+        style={{
+          paddingHorizontal: isDesktop ? 24 : 16,
+          paddingVertical: 12,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          borderBottomWidth: 0.5,
+          borderBottomColor: isDark ? "#222" : "#ddd",
+        }}
+      >
+        {/* Botão novo post */}
+        <TouchableOpacity onPress={openGalleryPost}>
+          <Text
+            style={{
+              fontSize: 28,
+              fontWeight: "300",
+              color: isDark ? "#fff" : "#000",
+            }}
+          >
+            +
+          </Text>
+        </TouchableOpacity>
+      </View>
 
+      {/* FEED */}
       <ScrollView
         ref={scrollRef}
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerStyle={{ paddingBottom: 80 }}
         refreshControl={
-          <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={handlePullToRefresh}
-            tintColor={"#1DA1F2"}
-          />
+          !isDesktop ? (
+            <RefreshControl
+              refreshing={isRefetching}
+              onRefresh={handlePullToRefresh}
+              tintColor={isDark ? "#fff" : "#000"}
+            />
+          ) : undefined
         }
+        contentContainerStyle={{
+          alignItems: isDesktop ? "center" : "stretch",
+          paddingVertical: isDesktop ? 24 : 0,
+        }}
       >
-        <PostComposer />
-        <PostsList />
+        {/* POSTS */}
+        <View
+          style={{
+            width: "100%",
+            maxWidth: isDesktop ? 620 : "100%",
+          }}
+        >
+          <PostsList isDark={isDark} />
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
-};
-
-export default HomeScreen;
+}

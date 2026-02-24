@@ -1,146 +1,201 @@
-import React, { useEffect, useState, useCallback } from "react";
+// ----------------------------------------------------
+// PostScreen.tsx — TELA INDIVIDUAL DO POST
+// ESTILO INSTAGRAM
+// ----------------------------------------------------
+
+import React, { useMemo } from "react";
 import {
   View,
-  ActivityIndicator,
   Text,
+  Image,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
+  FlatList,
+  Dimensions,
+  useColorScheme,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import PostCard from "@/components/PostCard";
-import { postEvents } from "@/hooks/usePosts"; // ✅ sincronização global de posts
 
-type PostUser = {
-  id: string;
-  username: string;
-  displayName?: string;
-  avatar?: string | null;
-};
+import { usePosts } from "@/hooks/usePosts";
 
-type Post = {
-  id: string;
-  user: PostUser;
-  content?: string;
-  image?: string | null;
-  likes: string[];
-  comments?: any[];
-  createdAt: number;
-};
+const { width } = Dimensions.get("window");
 
-const PostsScreen = () => {
-  const [post, setPost] = useState<Post | null>(null);
-  const [loading, setLoading] = useState(true);
+export default function PostScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === "dark";
 
-  /** 🔄 Função para carregar o post mais recente */
-  const loadPost = useCallback(async () => {
-    try {
-      const stored = await AsyncStorage.getItem("posts");
-      if (stored) {
-        const parsed: Post[] = JSON.parse(stored);
-        const latest = parsed
-          .filter((p) => p && typeof p === "object")
-          .sort((a, b) => b.createdAt - a.createdAt)[0];
+  const { posts } = usePosts();
 
-        if (latest) {
-          setPost({
-            ...latest,
-            user: latest.user || {
-              id: "sem-id",
-              username: "usuário",
-              avatar: "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-            },
-            likes: Array.isArray(latest.likes) ? latest.likes : [],
-            comments: Array.isArray(latest.comments) ? latest.comments : [],
-          });
-        }
-      }
-    } catch (err) {
-      console.log("Erro ao carregar post:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  /** 🧠 Escuta global: sincroniza curtidas com feed e perfil */
-  useEffect(() => {
-    loadPost();
-
-    const sub = postEvents.addListener("post-updated", async (postId?: string) => {
-      // 🔎 só recarrega se o post exibido for o mesmo, ou se for indefinido (atualização global)
-      if (!postId || postId === post?.id) {
-        await loadPost();
-      }
-    });
-
-    return () => sub.remove();
-  }, [loadPost, post?.id]);
-
-  if (loading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator color="#133de9" size="large" />
-      </View>
-    );
-  }
+  // 🔎 Buscar post pelo ID
+  const post = useMemo(() => {
+    return posts?.find((p) => p.id === id);
+  }, [posts, id]);
 
   if (!post) {
     return (
       <View style={styles.center}>
-        <Text style={{ color: "#777" }}>Nenhum post encontrado</Text>
+        <Text style={{ color: "#9CA3AF" }}>
+          Post não encontrado
+        </Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      {/* 🔙 Cabeçalho */}
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: isDark ? "#000" : "#fff" },
+      ]}
+    >
+      {/* HEADER */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Feather name="arrow-left" size={24} color="#133de9" />
+        <TouchableOpacity onPress={() => router.back()}>
+          <Feather
+            name="arrow-left"
+            size={24}
+            color={isDark ? "#fff" : "#000"}
+          />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Postagem</Text>
+
+        <Text
+          style={[
+            styles.headerTitle,
+            { color: isDark ? "#fff" : "#000" },
+          ]}
+        >
+          Publicação
+        </Text>
+
+        <View style={{ width: 24 }} />
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
+      <FlatList
+        data={[post]}
+        keyExtractor={(item) => item.id}
         showsVerticalScrollIndicator={false}
-      >
-        <PostCard post={post} />
-      </ScrollView>
+        renderItem={({ item }) => (
+          <>
+            {/* USER */}
+            <View style={styles.userRow}>
+              <Image
+                source={{ uri: item.user?.image }}
+                style={styles.avatar}
+              />
+              <Text
+                style={[
+                  styles.username,
+                  { color: isDark ? "#fff" : "#000" },
+                ]}
+              >
+                {item.user?.username}
+              </Text>
+            </View>
+
+            {/* IMAGE */}
+            <Image
+              source={{ uri: item.image }}
+              style={styles.postImage}
+              resizeMode="cover"
+            />
+
+            {/* ACTIONS */}
+            <View style={styles.actionsRow}>
+              <Feather
+                name="heart"
+                size={24}
+                color={isDark ? "#fff" : "#000"}
+              />
+              <Feather
+                name="message-circle"
+                size={24}
+                color={isDark ? "#fff" : "#000"}
+                style={{ marginLeft: 16 }}
+              />
+              <Feather
+                name="send"
+                size={24}
+                color={isDark ? "#fff" : "#000"}
+                style={{ marginLeft: 16 }}
+              />
+            </View>
+
+            {/* CAPTION */}
+            {item.caption && (
+              <View style={styles.captionRow}>
+                <Text
+                  style={[
+                    styles.username,
+                    { color: isDark ? "#fff" : "#000" },
+                  ]}
+                >
+                  {item.user?.username}{" "}
+                </Text>
+                <Text
+                  style={{ color: isDark ? "#ddd" : "#333" }}
+                >
+                  {item.caption}
+                </Text>
+              </View>
+            )}
+          </>
+        )}
+      />
     </View>
   );
-};
-
-export default PostsScreen;
+}
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f9f9f9" },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingTop: 50,
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-  },
-  backButton: { marginRight: 12, padding: 4 },
-  headerTitle: { fontSize: 18, fontWeight: "600", color: "#133de9" },
-  scrollContent: {
-    alignItems: "center",
-    justifyContent: "flex-start",
-    paddingTop: 24,
-    paddingHorizontal: 12,
+  container: {
+    flex: 1,
   },
   center: {
     flex: 1,
-    justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#f9f9f9",
+    justifyContent: "center",
+  },
+  header: {
+    height: 60,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  headerTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  userRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  avatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginRight: 10,
+  },
+  username: {
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  postImage: {
+    width: width,
+    height: width,
+  },
+  actionsRow: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  captionRow: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    paddingBottom: 20,
   },
 });

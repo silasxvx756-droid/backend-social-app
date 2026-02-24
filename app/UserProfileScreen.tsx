@@ -1,485 +1,268 @@
-// src/screens/UserProfileScreen.tsx
-import React, { useEffect, useState, useCallback } from "react";
+// ------------------------------------------------------
+// UserProfileScreen.tsx — PERFIL PÚBLICO (IG STYLE)
+// VIEW ONLY (sem editar / sem logout)
+// HEADER SCROLLÁVEL
+// DARK MODE DINÂMICO
+// Recebe username via rota (feed)
+// Adicionado botão Seguir / Seguindo + Mensagem (mais próximos)
+// ------------------------------------------------------
+
+import React, { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
-  RefreshControl,
-  Image,
-  Alert,
+  Animated,
   StatusBar,
-  FlatList,
+  useColorScheme,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useUser } from "@clerk/clerk-expo";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
 import PostsList from "@/components/PostsList";
-import { postEvents } from "@/hooks/usePosts";
-import { addNotification } from "@/utils/addNotification";
-import Modal from "react-native-modal";
 
-interface RouteParams {
-  userId: string;
+const HEADER_OFFSET = 10;
+
+interface Profile {
   username: string;
-  firstName?: string;
-  avatar?: string;
+  name: string;
+  avatar: string;
+  posts: number;
+  followers: number;
+  following: number;
 }
 
-interface UserActor {
-  id: string;
-  username: string;
-  avatar?: string;
-}
-
-const UserProfileScreen: React.FC = () => {
-  const { user } = useUser();
+export default function UserProfileScreen() {
+  const { username } = useLocalSearchParams<{ username: string }>(); // usuário clicado
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const colorScheme = useColorScheme();
+  const isDarkMode = colorScheme === "dark";
 
-  const { userId = "", username = "", firstName = "", avatar = "" } =
-    useLocalSearchParams() as Partial<RouteParams>;
+  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [isFollowing, setIsFollowing] = useState(false); // botão seguir
+  const imageOpacity = useRef(new Animated.Value(0)).current;
 
-  const [isLoading, setIsLoading] = useState(true);
-  const [isNavigating, setIsNavigating] = useState(false); // 🔥 evitar navegação dupla
+  // 🔹 Simulação de fetch do usuário público
+  const loadUserProfile = async () => {
+    setLoading(true);
 
-  const [targetUser, setTargetUser] = useState({
-    id: userId,
-    username,
-    firstName,
-    avatar,
-  });
+    // Simula delay de fetch
+    await new Promise((r) => setTimeout(r, 400));
 
-  const [followersList, setFollowersList] = useState<UserActor[]>([]);
-  const [followingList, setFollowingList] = useState<UserActor[]>([]);
-  const [followersCount, setFollowersCount] = useState(0);
-  const [followingCount, setFollowingCount] = useState(0);
-  const [isFollowing, setIsFollowing] = useState(false);
-  const [isBlocked, setIsBlocked] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [isFollowersModalVisible, setFollowersModalVisible] = useState(false);
-  const [isFollowingModalVisible, setFollowingModalVisible] = useState(false);
-
-  /** 🔹 Carrega dados completos do usuário alvo */
-  const loadTargetUser = useCallback(async () => {
-    try {
-      const storedPosts = await AsyncStorage.getItem("posts");
-      let posts = storedPosts ? JSON.parse(storedPosts) : [];
-
-      const postWithUser = posts.find((p: any) => p.user.id === userId);
-
-      if (postWithUser) {
-        setTargetUser({
-          id: userId,
-          username: postWithUser.user.username,
-          firstName: postWithUser.user.displayName || "",
-          avatar: postWithUser.user.avatar || "",
-        });
-        return;
-      }
-
-      const followersStored = await AsyncStorage.getItem(`followers_${userId}`);
-      const followingStored = await AsyncStorage.getItem(`following_${userId}`);
-
-      const followers = followersStored ? JSON.parse(followersStored) : [];
-      const following = followingStored ? JSON.parse(followingStored) : [];
-
-      const foundUser =
-        followers.find((u: any) => u.id === userId) ||
-        following.find((u: any) => u.id === userId);
-
-      if (foundUser) {
-        setTargetUser({
-          id: userId,
-          username: foundUser.username,
-          firstName: foundUser.displayName || "",
-          avatar: foundUser.avatar || "",
-        });
-      }
-    } catch (err) {
-      console.warn("Erro ao carregar targetUser:", err);
-    }
-  }, [userId]);
-
-  /** 🔹 Carrega seguidores/seguindo */
-  const loadFollowData = useCallback(async () => {
-    try {
-      const followersKey = `followers_${userId}`;
-      const followingKey = `following_${userId}`;
-      const blockedKey = `blocked_${user?.id}`;
-
-      const [storedFollowers, storedFollowing, blockedStored] = await Promise.all([
-        AsyncStorage.getItem(followersKey),
-        AsyncStorage.getItem(followingKey),
-        AsyncStorage.getItem(blockedKey),
-      ]);
-
-      const followers = storedFollowers ? JSON.parse(storedFollowers) : [];
-      const following = storedFollowing ? JSON.parse(storedFollowing) : [];
-      const blocked = blockedStored ? JSON.parse(blockedStored) : [];
-
-      setFollowersList(followers);
-      setFollowingList(following);
-      setFollowersCount(followers.length);
-      setFollowingCount(following.length);
-
-      if (user) {
-        const amIFollowing = followers.some((f: any) => f.id === user.id);
-        const amIBlocking = blocked.some((b: any) => b.id === userId);
-        setIsFollowing(amIFollowing);
-        setIsBlocked(amIBlocking);
-      }
-    } catch (error) {
-      console.error("Erro ao carregar dados de perfil:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [userId, user]);
-
-  /** 🔹 Seguir / deixar de seguir */
-  const toggleFollow = async () => {
-    if (!user) return;
-    try {
-      const followersKey = `followers_${userId}`;
-      const followingKey = `following_${user.id}`;
-
-      const [followersStored, followingStored] = await Promise.all([
-        AsyncStorage.getItem(followersKey),
-        AsyncStorage.getItem(followingKey),
-      ]);
-
-      const followers = followersStored ? JSON.parse(followersStored) : [];
-      const following = followingStored ? JSON.parse(followingStored) : [];
-
-      const isAlreadyFollowing = followers.some((f: any) => f.id === user.id);
-
-      if (isAlreadyFollowing) {
-        const updatedFollowers = followers.filter((f: any) => f.id !== user.id);
-        const updatedFollowing = following.filter((f: any) => f.id !== userId);
-
-        await AsyncStorage.setItem(followersKey, JSON.stringify(updatedFollowers));
-        await AsyncStorage.setItem(followingKey, JSON.stringify(updatedFollowing));
-
-        setIsFollowing(false);
-        setFollowersList(updatedFollowers);
-        setFollowersCount(updatedFollowers.length);
-      } else {
-        const newFollower: UserActor = {
-          id: user.id,
-          username:
-            (user.username as string) ||
-            (user.unsafeMetadata?.username as string) ||
-            "@user",
-          avatar: user.imageUrl || "",
-        };
-
-        const newFollowing = { id: userId, username, avatar };
-
-        const updatedFollowers = [newFollower, ...followers];
-        const updatedFollowing = [newFollowing, ...following];
-
-        await AsyncStorage.setItem(followersKey, JSON.stringify(updatedFollowers));
-        await AsyncStorage.setItem(followingKey, JSON.stringify(updatedFollowing));
-
-        setIsFollowing(true);
-        setFollowersList(updatedFollowers);
-        setFollowersCount(updatedFollowers.length);
-        await addNotification(newFollower, "follow");
-      }
-
-      postEvents.emit("post-updated");
-    } catch {
-      Alert.alert("Erro", "Não foi possível atualizar o status de seguimento.");
-    }
-  };
-
-  /** 🔹 Bloquear / desbloquear */
-  const toggleBlock = async () => {
-    if (!user) return;
-    try {
-      const blockedKey = `blocked_${user.id}`;
-      const stored = await AsyncStorage.getItem(blockedKey);
-      const blocked = stored ? JSON.parse(stored) : [];
-
-      const isAlreadyBlocked = blocked.some((b: any) => b.id === userId);
-
-      if (isAlreadyBlocked) {
-        const updatedBlocked = blocked.filter((b: any) => b.id !== userId);
-        await AsyncStorage.setItem(blockedKey, JSON.stringify(updatedBlocked));
-        setIsBlocked(false);
-        Alert.alert("Desbloqueado", `${username} foi desbloqueado.`);
-      } else {
-        const newBlocked = [
-          ...blocked,
-          { id: userId, username, avatar: avatar || "" },
-        ];
-        await AsyncStorage.setItem(blockedKey, JSON.stringify(newBlocked));
-        setIsBlocked(true);
-        Alert.alert("Usuário bloqueado", `${username} foi bloqueado com sucesso.`);
-      }
-
-      postEvents.emit("post-updated");
-    } catch {
-      Alert.alert("Erro", "Não foi possível atualizar o bloqueio.");
-    }
-  };
-
-  /** 🔹 Abrir chat (com proteção anti-duplo clique) */
-  const handleSendMessage = () => {
-    if (!user || isBlocked) {
-      Alert.alert("Ação bloqueada", "Você não pode enviar mensagens a este usuário.");
-      return;
-    }
-
-    if (isNavigating) return; // 🔥 evita abrir 2 telas
-    setIsNavigating(true);
-
-    router.push({
-      pathname: "/ChatScreen",
-      params: {
-        loggedUser: JSON.stringify({
-          id: user.id,
-          username:
-            (user.username as string) ||
-            (user.unsafeMetadata?.username as string) ||
-            "@user",
-          displayName: user.firstName || "",
-          avatar: user.imageUrl || "",
-        }),
-        chatUser: JSON.stringify({
-          id: userId,
-          username,
-          displayName: targetUser.firstName || "",
-          avatar: targetUser.avatar || "",
-        }),
-      },
+    // Aqui você pode substituir por sua API real
+    setProfile({
+      username: username || "usuario",
+      name: `Usuário ${username || "Público"}`,
+      avatar: `https://i.pravatar.cc/150?u=${username || "usuario"}`, // avatar único por username
+      posts: Math.floor(Math.random() * 200),
+      followers: Math.floor(Math.random() * 5000),
+      following: Math.floor(Math.random() * 500),
     });
 
-    setTimeout(() => setIsNavigating(false), 300); // 🔓 libera clique novamente
-  };
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadTargetUser();
-    await loadFollowData();
-    setRefreshing(false);
+    setLoading(false);
   };
 
   useEffect(() => {
-    loadTargetUser();
-    loadFollowData();
+    loadUserProfile();
+  }, [username]);
 
-    const sub = postEvents.addListener("post-updated", () => {
-      loadTargetUser();
-      loadFollowData();
-    });
-
-    return () => sub.remove();
-  }, [loadTargetUser, loadFollowData]);
-
-  if (isLoading) {
+  if (loading || !profile) {
     return (
-      <View className="flex-1 justify-center items-center bg-white">
-        <ActivityIndicator size="large" color="#133de9" />
+      <View
+        className="flex-1 items-center justify-center"
+        style={{ backgroundColor: isDarkMode ? "#000" : "#fff" }}
+      >
+        <ActivityIndicator
+          size="large"
+          color={isDarkMode ? "#fff" : "#000"}
+        />
       </View>
     );
   }
 
-  /** 🔹 Item renderizado nos modais */
-  const renderUserItem = ({ item }: { item: UserActor }) => (
-    <TouchableOpacity
-      className="flex-row items-center py-2"
-      onPress={() => {
-        setFollowersModalVisible(false);
-        setFollowingModalVisible(false);
-        router.push({
-          pathname: "/UserProfileScreen",
-          params: {
-            userId: item.id,
-            username: item.username,
-            avatar: item.avatar || "",
-          },
-        });
-      }}
-    >
-      <Image
-        source={{
-          uri: item.avatar || "https://cdn-icons-png.flaticon.com/512/847/847969.png",
-        }}
-        className="w-10 h-10 rounded-full mr-3"
-      />
-      <Text className="text-gray-900 text-base">@{item.username}</Text>
-    </TouchableOpacity>
-  );
-
   return (
-    <View className="flex-1 bg-white" style={{ paddingTop: StatusBar.currentHeight || 0 }}>
-      {/* Cabeçalho */}
-      <View className="flex-row items-center px-4 py-3 border-b border-gray-200">
-        <TouchableOpacity onPress={() => router.back()}>
-          <Feather name="arrow-left" size={24} color="#133de9" />
-        </TouchableOpacity>
-      </View>
+    <View
+      className="flex-1"
+      style={{ backgroundColor: isDarkMode ? "#000" : "#fff" }}
+    >
+      <StatusBar
+        barStyle={isDarkMode ? "light-content" : "dark-content"}
+        backgroundColor={isDarkMode ? "#000" : "#fff"}
+      />
 
-      <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      >
-        {/* Foto + informações */}
-        <View className="items-center mt-6">
-          <Image
-            source={{
-              uri:
-                targetUser.avatar ||
-                "https://cdn-icons-png.flaticon.com/512/847/847969.png",
-            }}
-            className="w-28 h-28 rounded-full"
-          />
-          <Text className="text-xl font-bold text-gray-900 mt-3">
-            {targetUser.firstName || "Usuário"}
-          </Text>
-          <Text className="text-gray-700 text-lg">@{targetUser.username}</Text>
+      <ScrollView showsVerticalScrollIndicator={false}>
+        {/* HEADER */}
+        <View
+          className="flex-row items-center justify-between px-4 py-2"
+          style={{ paddingTop: insets.top + HEADER_OFFSET }}
+        >
+          <TouchableOpacity onPress={() => router.back()}>
+            <Feather
+              name="arrow-left"
+              size={22}
+              color={isDarkMode ? "#fff" : "#000"}
+            />
+          </TouchableOpacity>
 
-          {/* Seguidores / seguindo */}
-          {!isBlocked && (
-            <View
-              className="flex-row justify-center items-center mt-4"
-              style={{ gap: 50 }}
+          <View
+            className="absolute left-0 right-0 flex-row justify-center items-center"
+            style={{ top: insets.top + 12 }}
+          >
+            <Text
+              style={{
+                fontSize: 18,
+                fontWeight: "600",
+                color: isDarkMode ? "#fff" : "#000",
+                marginTop: -5,
+              }}
             >
-              <TouchableOpacity
-                onPress={() => setFollowersModalVisible(true)}
-                style={{ alignItems: "center" }}
-              >
-                <Text className="text-gray-900 text-base font-semibold">
-                  {followersCount}
-                </Text>
-                <Text className="text-gray-500 text-sm">Seguidores</Text>
-              </TouchableOpacity>
+              {profile.username}
+            </Text>
+          </View>
 
-              <TouchableOpacity
-                onPress={() => setFollowingModalVisible(true)}
-                style={{ alignItems: "center" }}
-              >
-                <Text className="text-gray-900 text-base font-semibold">
-                  {followingCount}
-                </Text>
-                <Text className="text-gray-500 text-sm">Seguindo</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+          <View style={{ width: 22 }} />
+        </View>
 
-          {/* Botões */}
-          {user?.id !== userId && (
-            <View className="mt-5 items-center">
-              {!isBlocked && (
-                <>
-                  <TouchableOpacity
-                    onPress={toggleFollow}
-                    className="px-5 py-2 rounded-full mb-2"
-                    style={{
-                      backgroundColor: isFollowing ? "#e5e7eb" : "#133de9",
-                    }}
-                  >
-                    <Text
-                      className={`font-semibold ${
-                        isFollowing ? "text-gray-900" : "text-white"
-                      }`}
-                    >
-                      {isFollowing ? "Seguindo" : "Seguir"}
-                    </Text>
-                  </TouchableOpacity>
+        {/* PROFILE */}
+        <View className="px-4 mt-2">
+          <View className="flex-row items-center">
+            <Animated.Image
+              source={{ uri: profile.avatar }}
+              className="w-24 h-24 rounded-full"
+              style={{ opacity: imageOpacity }}
+              onLoad={() =>
+                Animated.timing(imageOpacity, {
+                  toValue: 1,
+                  duration: 200,
+                  useNativeDriver: true,
+                }).start()
+              }
+            />
 
-                  <TouchableOpacity
-                    disabled={isNavigating}
-                    onPress={handleSendMessage}
-                    className="px-5 py-2 rounded-full bg-[#133de9]"
-                    style={{ opacity: isNavigating ? 0.6 : 1 }}
-                  >
-                    <Text className="text-white font-semibold">Enviar mensagem</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-
-              <TouchableOpacity
-                onPress={toggleBlock}
-                className="px-5 py-2 rounded-full mt-2"
+            <View className="flex-1 ml-6">
+              <Text
                 style={{
-                  backgroundColor: isBlocked ? "#ef4444" : "#e5e7eb",
+                  fontSize: 16,
+                  fontWeight: "600",
+                  marginBottom: 4,
+                  color: isDarkMode ? "#fff" : "#000",
                 }}
               >
-                <Text
-                  className={`font-semibold ${isBlocked ? "text-white" : "text-gray-900"}`}
+                {profile.name}
+              </Text>
+
+              {/* STATS */}
+              <View className="flex-row justify-between" style={{ marginLeft: -36 }}>
+                {[
+                  { label: "posts", value: profile.posts },
+                  { label: "seguidores", value: profile.followers },
+                  { label: "seguindo", value: profile.following },
+                ].map((item) => (
+                  <View key={item.label} className="items-center flex-1">
+                    <Text
+                      style={{
+                        fontSize: 18,
+                        fontWeight: "700",
+                        color: isDarkMode ? "#fff" : "#000",
+                      }}
+                    >
+                      {item.value}
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        color: isDarkMode ? "#aaa" : "#666",
+                      }}
+                    >
+                      {item.label}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+
+              {/* BOTÕES SEGUIR / SEGUINDO + MENSAGEM */}
+              <View className="mt-4 flex-row" style={{ justifyContent: "flex-start", gap: 8 }}>
+                {/* Botão Seguir / Seguindo */}
+                <TouchableOpacity
+                  onPress={() => setIsFollowing(!isFollowing)}
+                  style={{
+                    flex: 0.45,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                    backgroundColor: isFollowing
+                      ? isDarkMode
+                        ? "#333"
+                        : "#eee"
+                      : "#0095f6",
+                    borderWidth: isFollowing ? 1 : 0,
+                    borderColor: isFollowing
+                      ? isDarkMode
+                        ? "#555"
+                        : "#ccc"
+                      : "transparent",
+                    alignItems: "center",
+                  }}
                 >
-                  {isBlocked ? "Desbloquear" : "Bloquear"}
-                </Text>
-              </TouchableOpacity>
+                  <Text
+                    style={{
+                      color: isFollowing ? (isDarkMode ? "#fff" : "#000") : "#fff",
+                      fontWeight: "600",
+                      fontSize: 12,
+                    }}
+                  >
+                    {isFollowing ? "Seguindo" : "Seguir"}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Botão Enviar Mensagem */}
+                <TouchableOpacity
+                  onPress={() => router.push(`/chat/${profile.username}`)}
+                  style={{
+                    flex: 0.45,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                    backgroundColor: isDarkMode ? "#333" : "#eee",
+                    borderWidth: 1,
+                    borderColor: isDarkMode ? "#555" : "#ccc",
+                    alignItems: "center",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: isDarkMode ? "#fff" : "#000",
+                      fontWeight: "600",
+                      fontSize: 12,
+                    }}
+                  >
+                    Mensagem
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          )}
+          </View>
         </View>
 
-        {/* Posts */}
-        <View className="mt-6">
-          {isBlocked ? (
-            <Text className="text-center text-gray-500 mt-10">
-              Este usuário está bloqueado. Conteúdo oculto.
-            </Text>
-          ) : (
-            <PostsList username={targetUser.username} />
-          )}
-        </View>
+        {/* DIVIDER */}
+        <View
+          className="h-px mt-6"
+          style={{ backgroundColor: isDarkMode ? "#333" : "#ddd" }}
+        />
 
-        <View className="mb-10" />
+        {/* FEED DE POSTS */}
+        <PostsList
+          username={profile.username}
+          isGrid
+          type="posts"
+          darkMode={isDarkMode}
+        />
+
+        <View style={{ height: insets.bottom + 80 }} />
       </ScrollView>
-
-      {/* Modal Seguidores */}
-      <Modal
-        isVisible={isFollowersModalVisible}
-        onBackdropPress={() => setFollowersModalVisible(false)}
-        style={{ margin: 0, justifyContent: "flex-end" }}
-      >
-        <View className="bg-white rounded-t-2xl p-5 max-h-[70%]">
-          <Text className="text-lg font-semibold mb-3 text-center">
-            Seguidores ({followersList.length})
-          </Text>
-          {followersList.length === 0 ? (
-            <Text className="text-center text-gray-500 mt-4">
-              Nenhum seguidor encontrado.
-            </Text>
-          ) : (
-            <FlatList
-              data={followersList}
-              keyExtractor={(item) => item.id}
-              renderItem={renderUserItem}
-            />
-          )}
-        </View>
-      </Modal>
-
-      {/* Modal Seguindo */}
-      <Modal
-        isVisible={isFollowingModalVisible}
-        onBackdropPress={() => setFollowingModalVisible(false)}
-        style={{ margin: 0, justifyContent: "flex-end" }}
-      >
-        <View className="bg-white rounded-t-2xl p-5 max-h-[70%]">
-          <Text className="text-lg font-semibold mb-3 text-center">
-            Seguindo ({followingList.length})
-          </Text>
-          {followingList.length === 0 ? (
-            <Text className="text-center text-gray-500 mt-4">
-              Nenhum usuário seguido.
-            </Text>
-          ) : (
-            <FlatList
-              data={followingList}
-              keyExtractor={(item) => item.id}
-              renderItem={renderUserItem}
-            />
-          )}
-        </View>
-      </Modal>
     </View>
   );
-};
-
-export default UserProfileScreen;
+}

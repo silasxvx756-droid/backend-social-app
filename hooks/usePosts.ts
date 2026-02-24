@@ -1,9 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { EventEmitter } from "expo-modules-core";
-
-type PostEvents = { "post-updated": (postId?: string) => void };
-export const postEvents = new EventEmitter<PostEvents>();
+// usePosts.ts
+import { useState, useEffect, useCallback } from "react";
 
 export interface PostUser {
   id: string;
@@ -13,169 +9,76 @@ export interface PostUser {
 }
 
 export interface Post {
-  id: string;
+  _id: string;
   user: PostUser;
   content: string;
   image?: string;
-  likes: string[]; // Agora GUARDA userId
-  createdAt: number;
+  likes: string[];
   comments?: any[];
+  createdAt: string;
 }
 
-const STORAGE_KEY = "posts";
+const API_URL = "http://192.168.0.105:3000"; // 👈 TROQUE PELO SEU IP
 
 export const usePosts = () => {
   const [posts, setPosts] = useState<Post[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const lastUpdatedPostId = useRef<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
-  /** 🔄 Converte likes antigos (username[]) → userId[] */
-  const migrateOldLikes = (parsed: Post[]): Post[] => {
-    return parsed.map((p) => {
-      // Se likes tiver usernames, converte para userId
-      const shouldMigrate =
-        p.likes.length > 0 &&
-        typeof p.likes[0] === "string" &&
-        p.likes[0].includes("@"); // heurística simples
-
-      if (!shouldMigrate) return p;
-
-      // Likes antigos armazenavam username, agora armazenamos userId
-      const migratedLikes = p.likes.map((username) =>
-        username === p.user.username ? p.user.id : username
-      );
-
-      return {
-        ...p,
-        likes: migratedLikes,
-      };
-    });
-  };
-
-  /** 🔄 Carrega posts */
-  const loadPosts = useCallback(async () => {
-    try {
-      setIsLoading(true);
-
-      const stored = await AsyncStorage.getItem(STORAGE_KEY);
-      const parsed: Post[] = stored ? JSON.parse(stored) : [];
-
-      // 🔄 MIGRAÇÃO AUTOMÁTICA
-      const migrated = migrateOldLikes(parsed);
-
-      // Salva de volta caso tenha migrado algo
-      if (JSON.stringify(parsed) !== JSON.stringify(migrated)) {
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+  // -----------------------------
+  // LOAD POSTS FROM BACKEND
+  // -----------------------------
+  useEffect(() => {
+    async function loadPosts() {
+      try {
+        const response = await fetch(`${API_URL}/posts`);
+        const data = await response.json();
+        setPosts(data);
+      } catch (err) {
+        console.error("Erro carregando posts:", err);
+      } finally {
+        setLoaded(true);
       }
-
-      const sorted = migrated.sort((a, b) => b.createdAt - a.createdAt);
-      setPosts(sorted);
-    } catch (err) {
-      console.error("Erro ao carregar posts:", err);
-    } finally {
-      setIsLoading(false);
     }
+
+    loadPosts();
   }, []);
 
-  /** 💾 Salva posts com controle de emissão */
-  const savePosts = useCallback(
-    async (data: Post[], emit: boolean = true, updatedPostId?: string) => {
+  // -----------------------------
+  // ADD POST (BACKEND)
+  // -----------------------------
+  const addPost = useCallback(
+    async ({
+      user,
+      content,
+      imageFile,
+    }: {
+      user: PostUser;
+      content: string;
+      imageFile?: string;
+    }) => {
       try {
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        setPosts(data);
+        const response = await fetch(`${API_URL}/posts`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            user,
+            content,
+            image: imageFile,
+          }),
+        });
 
-        if (emit) {
-          lastUpdatedPostId.current = updatedPostId || null;
-          postEvents.emit("post-updated", updatedPostId);
-        }
+        const newPost = await response.json();
+
+        setPosts((prev) => [newPost, ...prev]);
       } catch (err) {
-        console.error("Erro ao salvar posts:", err);
+        console.error("Erro addPost backend:", err);
+        throw err;
       }
     },
     []
   );
 
-  /** ❤️ Curtir/descurtir usando USER ID */
-  const toggleLike = useCallback(
-    async (postId: string, userId: string) => {
-      const updated = posts.map((p) =>
-        p.id === postId
-          ? {
-              ...p,
-              likes: p.likes.includes(userId)
-                ? p.likes.filter((id) => id !== userId)
-                : [...p.likes, userId],
-            }
-          : p
-      );
-
-      setPosts(updated);
-      await savePosts(updated, true, postId);
-    },
-    [posts, savePosts]
-  );
-
-  /** 🗑️ Deletar post */
-  const deletePost = useCallback(
-    async (postId: string) => {
-      const updated = posts.filter((p) => p.id !== postId);
-      await savePosts(updated, true, postId);
-    },
-    [posts, savePosts]
-  );
-
-  /** ✏️ Atualizar username do autor sem mexer nas curtidas */
-  const updateUserInPosts = useCallback(
-    async (userId: string, newUsername: string, newDisplayName?: string) => {
-      const updated = posts.map((p) =>
-        p.user.id === userId
-          ? {
-              ...p,
-              user: {
-                ...p.user,
-                username: newUsername,
-                displayName: newDisplayName ?? p.user.displayName,
-              },
-            }
-          : p
-      );
-      await savePosts(updated);
-    },
-    [posts, savePosts]
-  );
-
-  /** 🔂 Recarregar manualmente */
-  const reload = useCallback(async () => {
-    await loadPosts();
-  }, [loadPosts]);
-
-  /** 🚀 Carrega ao montar */
-  useEffect(() => {
-    loadPosts();
-  }, [loadPosts]);
-
-  /** 🧠 Evita reload redundante do mesmo post */
-  useEffect(() => {
-    const listener = async (postId?: string) => {
-      if (lastUpdatedPostId.current && lastUpdatedPostId.current === postId) {
-        lastUpdatedPostId.current = null;
-        return;
-      }
-      await loadPosts();
-    };
-
-    postEvents.addListener("post-updated", listener);
-    return () => {
-      postEvents.removeListener("post-updated", listener);
-    };
-  }, [loadPosts]);
-
-  return {
-    posts,
-    isLoading,
-    toggleLike,
-    deletePost,
-    updateUserInPosts,
-    reload,
-  };
+  return { posts, loaded, addPost };
 };

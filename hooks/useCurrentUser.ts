@@ -1,5 +1,6 @@
 import { useUser } from "@clerk/clerk-expo";
-import { useMemo } from "react";
+import { useMemo, useEffect } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export interface CurrentUser {
   id: string;
@@ -17,7 +18,7 @@ export const useCurrentUser = () => {
     const username =
       user.username ||
       (user.unsafeMetadata?.username as string) ||
-      "usuário";
+      "usuario";
 
     const displayName =
       `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
@@ -30,6 +31,21 @@ export const useCurrentUser = () => {
       avatar: user.imageUrl ?? null,
     };
   }, [isLoaded, user]);
+
+  // 🔥 SALVA TODO USUÁRIO QUE LOGAR
+  useEffect(() => {
+    if (!currentUser) return;
+
+    (async () => {
+      const stored = await AsyncStorage.getItem("@all_users");
+      const users = stored ? JSON.parse(stored) : [];
+
+      if (!users.find((u: any) => u.id === currentUser.id)) {
+        users.push(currentUser);
+        await AsyncStorage.setItem("@all_users", JSON.stringify(users));
+      }
+    })();
+  }, [currentUser]);
 
   return { currentUser };
 };

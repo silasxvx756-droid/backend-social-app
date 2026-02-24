@@ -1,9 +1,7 @@
-// src/screens/SearchScreen.tsx
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import {
   View,
   TextInput,
-  ScrollView,
   Text,
   TouchableOpacity,
   StyleSheet,
@@ -11,6 +9,9 @@ import {
   Image,
   ActivityIndicator,
   Keyboard,
+  useColorScheme,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -30,7 +31,7 @@ type RootStackParamList = {
   UserProfileScreen: {
     userId: string;
     username: string;
-    firstName?: string;
+    displayName?: string;
     avatar?: string;
   };
   SearchScreen: undefined;
@@ -42,66 +43,89 @@ type SearchScreenNavigationProp = NativeStackNavigationProp<
 >;
 
 const SearchScreen = () => {
+  const scheme = useColorScheme();
+  const isDark = scheme === "dark";
+
   const navigation = useNavigation<SearchScreenNavigationProp>();
   const { currentUser } = useCurrentUser();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [recentUsers, setRecentUsers] = useState<User[]>([]);
   const [searching, setSearching] = useState(false);
 
   const searchInputRef = useRef<TextInput>(null);
   const debounceTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // 🔹 Carregar usuários a partir dos posts
+  // 🔍 CARREGAR USUÁRIOS
   const loadUsers = useCallback(async () => {
     try {
-      const postsData = await AsyncStorage.getItem("posts");
-      if (!postsData) return;
-
-      const posts = JSON.parse(postsData);
       const usersMap = new Map<string, User>();
 
-      posts.forEach((post: any) => {
-        const user = post.user;
-        if (user?.id && user.id !== currentUser?.id) {
-          usersMap.set(user.id, {
-            id: user.id,
-            username: user.username || `user_${user.id}`,
-            displayName: user.displayName,
-            avatar: user.avatar,
-          });
-        }
-      });
+      const storedUsers = await AsyncStorage.getItem("@all_users");
+      if (storedUsers) {
+        JSON.parse(storedUsers).forEach((u: User) => {
+          if (u.id !== currentUser?.id) usersMap.set(u.id, u);
+        });
+      }
 
-      setAllUsers(Array.from(usersMap.values()));
-    } catch (error) {
-      console.error("Erro ao carregar usuários:", error);
+      const postsData = await AsyncStorage.getItem("posts");
+      if (postsData) {
+        JSON.parse(postsData).forEach((post: any) => {
+          const u = post.user;
+          if (u?.id && u.id !== currentUser?.id) {
+            usersMap.set(u.id, {
+              id: u.id,
+              username: u.username,
+              displayName: u.displayName,
+              avatar: u.avatar,
+            });
+          }
+        });
+      }
+
+      const usersArray = Array.from(usersMap.values()).sort((a, b) =>
+        (a.displayName || a.username).localeCompare(b.displayName || b.username)
+      );
+
+      setAllUsers(usersArray);
+    } catch (e) {
+      console.error("Erro ao carregar usuários:", e);
     }
   }, [currentUser?.id]);
 
-  // 🔹 Busca com debounce
+  // 🔍 CARREGAR RECENTES
+  const loadRecentUsers = useCallback(async () => {
+    try {
+      const stored = await AsyncStorage.getItem("@recent_users");
+      if (stored) setRecentUsers(JSON.parse(stored));
+    } catch (e) {
+      console.error("Erro ao carregar usuários recentes:", e);
+    }
+  }, []);
+
+  // 🔍 BUSCA COM DEBOUNCE
   const performSearch = useCallback(
     (query: string) => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
 
+      const trimmedQuery = query.toLowerCase().trim();
+
+      if (!trimmedQuery) {
+        setFilteredUsers([]);
+        setSearching(false);
+        return;
+      }
+
+      setSearching(true);
+
       debounceTimer.current = setTimeout(() => {
-        const trimmedQuery = query.toLowerCase().trim();
-
-        if (!trimmedQuery) {
-          setFilteredUsers([]);
-          setSearching(false);
-          return;
-        }
-
-        setSearching(true);
-
-        const filtered = allUsers.filter((user) => {
-          const usernameMatch = user.username.toLowerCase().includes(trimmedQuery);
-          const displayNameMatch = user.displayName?.toLowerCase().includes(trimmedQuery);
-          return usernameMatch || displayNameMatch;
-        });
+        const filtered = allUsers.filter(
+          (u) =>
+            u.username.toLowerCase().includes(trimmedQuery) ||
+            u.displayName?.toLowerCase().includes(trimmedQuery)
+        );
 
         setFilteredUsers(filtered);
         setSearching(false);
@@ -110,215 +134,189 @@ const SearchScreen = () => {
     [allUsers]
   );
 
-  // 🔹 Carregar dados iniciais ao focar a tela
-  useFocusEffect(
-    useCallback(() => {
-      const loadData = async () => {
-        setLoading(true);
-        try {
-          await loadUsers();
-        } catch (error) {
-          console.error("Erro ao carregar dados:", error);
-        } finally {
-          setLoading(false);
-        }
-      };
-      loadData();
-    }, [loadUsers])
+  // 🔗 ABRIR PERFIL
+  const handleUserPress = useCallback(
+    async (user: User) => {
+      Keyboard.dismiss();
+
+      navigation.navigate("UserProfileScreen", {
+        userId: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        avatar: user.avatar || "",
+      });
+
+      try {
+        const updated = [user, ...recentUsers.filter((u) => u.id !== user.id)].slice(0, 10);
+        setRecentUsers(updated);
+        await AsyncStorage.setItem("@recent_users", JSON.stringify(updated));
+      } catch (e) {
+        console.error("Erro ao salvar usuário recente:", e);
+      }
+    },
+    [navigation, recentUsers]
   );
 
-  // 🔹 Efeito de busca
+  // ❌ REMOVER RECENTE
+  const handleRemoveRecentUser = useCallback(
+    async (userId: string) => {
+      try {
+        const updated = recentUsers.filter((u) => u.id !== userId);
+        setRecentUsers(updated);
+        await AsyncStorage.setItem("@recent_users", JSON.stringify(updated));
+      } catch (e) {
+        console.error("Erro ao remover usuário recente:", e);
+      }
+    },
+    [recentUsers]
+  );
+
+  const renderUser = ({ item }: { item: User }) => (
+    <TouchableOpacity
+      style={styles.userItem}
+      onPress={() => handleUserPress(item)}
+      activeOpacity={0.7}
+    >
+      <View style={styles.userContent}>
+        {item.avatar ? (
+          <Image source={{ uri: item.avatar }} style={styles.avatar} />
+        ) : (
+          <View
+            style={[
+              styles.avatarPlaceholder,
+              { backgroundColor: isDark ? "#2c2c2c" : "#f0f0f0" },
+            ]}
+          >
+            <Feather name="user" size={20} color={isDark ? "#8899a6" : "#657786"} />
+          </View>
+        )}
+
+        <View style={styles.userInfo}>
+          <Text
+            style={[styles.displayName, { color: isDark ? "#fff" : "#14171a" }]}
+            numberOfLines={1}
+          >
+            {item.displayName || item.username}
+          </Text>
+          <Text
+            style={[styles.username, { color: isDark ? "#8899a6" : "#657786" }]}
+            numberOfLines={1}
+          >
+            @{item.username}
+          </Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      loadUsers();
+      loadRecentUsers();
+    }, [loadUsers, loadRecentUsers])
+  );
+
   useEffect(() => {
     performSearch(searchQuery);
   }, [searchQuery, performSearch]);
 
-  // 🔹 Navegar para o perfil correto
-  const handleUserPress = useCallback(
-    (user: User) => {
-      Keyboard.dismiss();
-      navigation.navigate("UserProfileScreen", {
-        userId: user.id,
-        username: user.username,
-        firstName: user.displayName || "",
-        avatar: user.avatar || "",
-      });
-    },
-    [navigation]
-  );
+  const dataToRender = searchQuery ? filteredUsers : recentUsers;
 
-  // 🔹 Renderizar usuário
-  const renderUser = useCallback(
-    ({ item }: { item: User }) => (
-      <TouchableOpacity style={styles.userItem} onPress={() => handleUserPress(item)}>
-        <View style={styles.userContent}>
-          {item.avatar ? (
-            <Image source={{ uri: item.avatar }} style={styles.avatar} />
-          ) : (
-            <View style={styles.avatarPlaceholder}>
-              <Feather name="user" size={20} color="#657786" />
-            </View>
-          )}
-          <View style={styles.userInfo}>
-            <Text style={styles.displayName} numberOfLines={1}>
-              {item.displayName || item.username}
-            </Text>
-            <Text style={styles.username} numberOfLines={1}>
-              @{item.username}
-            </Text>
-          </View>
-        </View>
-      </TouchableOpacity>
-    ),
-    [handleUserPress]
-  );
-
-  // 🔹 Tela de carregamento
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <View style={styles.searchContainer}>
-            <Feather name="search" size={20} color="#657786" />
-            <TextInput
-              placeholder="Pesquisar"
-              style={styles.searchInput}
-              placeholderTextColor="#657786"
-              editable={false}
-            />
-          </View>
-        </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#133de9" />
-          <Text style={styles.loadingText}>Carregando...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  return (
-    <SafeAreaView style={styles.container}>
-      {/* 🔹 Campo de busca */}
-      <View style={styles.header}>
-        <View style={styles.searchContainer}>
-          <Feather name="search" size={20} color="#657786" />
-          <TextInput
-            ref={searchInputRef}
-            placeholder="Pesquisar"
-            style={styles.searchInput}
-            placeholderTextColor="#657786"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            autoCorrect={false}
-            autoCapitalize="none"
-            returnKeyType="search"
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity style={styles.clearButton} onPress={() => setSearchQuery("")}>
-              <Feather name="x" size={18} color="#657786" />
-            </TouchableOpacity>
-          )}
-        </View>
+  const renderHeader = () => (
+    <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+      <View
+        style={[
+          styles.searchContainer,
+          { backgroundColor: isDark ? "#1e1e1e" : "#f5f8fa" },
+        ]}
+      >
+        <Feather name="search" size={20} color={isDark ? "#8899a6" : "#657786"} />
+        <TextInput
+          ref={searchInputRef}
+          placeholder="Pesquisar"
+          style={[styles.searchInput, { color: isDark ? "#fff" : "#14171a" }]}
+          placeholderTextColor={isDark ? "#8899a6" : "#657786"}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchQuery("")}>
+            <Feather name="x" size={18} color={isDark ? "#8899a6" : "#657786"} />
+          </TouchableOpacity>
+        )}
       </View>
 
-      <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
-        {searching ? (
+      {!searchQuery && recentUsers.length > 0 && (
+        <Text
+          style={{
+            marginTop: 12,
+            color: isDark ? "#8899a6" : "#657786",
+            fontWeight: "600",
+          }}
+        >
+          Usuários Recentes
+        </Text>
+      )}
+    </View>
+  );
+
+  return (
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      <SafeAreaView style={[styles.container, { backgroundColor: isDark ? "#121212" : "#fff" }]}>
+        {searching && searchQuery.length > 0 && (
           <View style={styles.searchingContainer}>
-            <ActivityIndicator size="small" color="#133de9" />
-            <Text style={styles.searchingText}>Pesquisando...</Text>
+            <ActivityIndicator size="small" color="#1da1f2" />
+            <Text style={{ marginLeft: 8, color: isDark ? "#8899a6" : "#657786" }}>
+              Pesquisando...
+            </Text>
           </View>
-        ) : (
-          <>
-            {filteredUsers.length > 0 ? (
-              <FlatList
-                data={filteredUsers}
-                keyExtractor={(item) => item.id}
-                renderItem={renderUser}
-                scrollEnabled={false}
-                contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 16 }}
-              />
-            ) : (
-              searchQuery.length > 0 && (
-                <View style={styles.emptyContainer}>
-                  <Feather name="search" size={48} color="#aab8c2" />
-                  <Text style={styles.emptyTitle}>Nenhum usuário encontrado</Text>
-                  <Text style={styles.emptySubtitle}>Tente pesquisar outro nome</Text>
-                </View>
-              )
-            )}
-          </>
         )}
-      </ScrollView>
-    </SafeAreaView>
+
+        <FlatList
+          data={dataToRender}
+          keyExtractor={(item) => item.id}
+          renderItem={renderUser}
+          ListHeaderComponent={renderHeader}
+          contentContainerStyle={{ paddingBottom: 20 }}
+          ListEmptyComponent={
+            searchQuery.length > 0 ? (
+              <View style={{ padding: 20, alignItems: "center" }}>
+                <Text style={{ color: isDark ? "#8899a6" : "#657786" }}>
+                  Nenhum usuário encontrado
+                </Text>
+              </View>
+            ) : null
+          }
+          keyboardShouldPersistTaps="handled"
+        />
+      </SafeAreaView>
+    </KeyboardAvoidingView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
-  header: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#ebedef",
-  },
+  container: { flex: 1 },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f7f9fa",
     borderRadius: 25,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    height: 44,
   },
-  searchInput: {
-    flex: 1,
-    marginLeft: 12,
-    fontSize: 16,
-    color: "#14171a",
-  },
-  clearButton: { padding: 4, marginLeft: 8 },
-  content: { flex: 1 },
-  userItem: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#ebedef",
-  },
+  searchInput: { flex: 1, marginLeft: 12, fontSize: 16 },
+  userItem: { paddingVertical: 12, paddingHorizontal: 16 },
   userContent: { flexDirection: "row", alignItems: "center" },
-  avatar: { width: 40, height: 40, borderRadius: 20, marginRight: 12 },
-  avatarPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#f7f9fa",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
-  userInfo: { flex: 1 },
-  displayName: { fontSize: 15, fontWeight: "600", color: "#14171a", marginBottom: 2 },
-  username: { fontSize: 14, color: "#657786" },
-  searchingContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 20,
-  },
-  searchingText: { marginLeft: 8, fontSize: 14, color: "#657786" },
-  emptyContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 60,
-    paddingHorizontal: 32,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#14171a",
-    marginTop: 16,
-    marginBottom: 8,
-    textAlign: "center",
-  },
-  emptySubtitle: { fontSize: 14, color: "#657786", textAlign: "center", lineHeight: 20 },
-  loadingContainer: { flex: 1, alignItems: "center", justifyContent: "center" },
-  loadingText: { marginTop: 12, fontSize: 14, color: "#657786" },
+  avatar: { width: 40, height: 40, borderRadius: 20 },
+  avatarPlaceholder: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  userInfo: { flex: 1, marginLeft: 10 },
+  displayName: { fontSize: 15, fontWeight: "600" },
+  username: { fontSize: 14 },
+  searchingContainer: { flexDirection: "row", justifyContent: "center", paddingVertical: 20 },
 });
 
 export default SearchScreen;
