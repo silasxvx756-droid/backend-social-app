@@ -16,7 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { useUser } from "@clerk/clerk-expo";
 
-const API_URL = "http://192.168.0.101:3000"; // ajuste para sua rede
+const API_URL = "https://backend-social-app-1.onrender.com"; // ajuste para sua rede
 
 export default function PostCreate() {
   const navigation = useNavigation<any>();

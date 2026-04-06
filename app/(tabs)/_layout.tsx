@@ -9,7 +9,7 @@ import axios from "axios";
 
 import { useUserSync } from "../../hooks/useUserSync";
 
-const API_URL = "http://192.168.0.103:3000";
+const API_URL = "https://backend-social-app-1.onrender.com";
 
 const TabsLayout = () => {
   // ------------------- CLERK / USER -------------------

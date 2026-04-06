@@ -21,7 +21,7 @@ export default function EditProfileScreen() {
   const isDarkMode = colorScheme === "dark";
   const navigation = useNavigation();
 
-  const API = "http://192.168.0.102:3000";
+  const API = "https://backend-social-app-1.onrender.com";
 
   const [formData, setFormData] = useState({
     firstName: "",
